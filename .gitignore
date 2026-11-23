@@ -1,0 +1,9 @@
+# Python cache & test scripts
+__pycache__/
+*.pyc
+test_*.py
+
+# OS metadata
+.DS_Store
+Thumbs.db
+*.log

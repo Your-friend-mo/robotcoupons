@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Coupon Details — Robot Coupons</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="detail">
+
+  <!-- Dark Subpage Header (No Search Bar) -->
+  <header class="site-header detail-header">
+    <canvas id="pagebg"></canvas>
+    <div class="header-inner">
+      <div class="header-topbar">
+        <button type="button" class="btn btn-outline-light" data-open-modal="errorModal">Login</button>
+        <a href="index.html" class="btn btn-purple">Home</a>
+      </div>
+
+      <div class="hero-center">
+        <a href="index.html" class="logo-link" aria-label="Robot Coupons Home">
+          <img src="assets/logo.svg" alt="Robot Coupons" class="site-logo">
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Coupon Detail Content -->
+  <main class="detail-container">
+    <h1 id="detailTitle" class="detail-page-title">Loading coupon...</h1>
+
+    <div class="detail-grid">
+      <!-- Left Column: Banner + Coupons Left + Offer Rows -->
+      <div>
+        <div id="detailBanner" class="single-coupon-page-image" role="img" aria-label="Coupon Banner"></div>
+        <div id="detailCouponsLeft" class="single-coupon-left single-page beat-title">Coupons Left: 0</div>
+        <div id="offersList" class="offers-list"></div>
+      </div>
+
+      <!-- Right Column: About + Tips + Ratings -->
+      <aside class="detail-sidebar">
+        <h4>About</h4>
+        <p id="detailAbout"></p>
+
+        <h4>Tips</h4>
+        <p id="detailTips"></p>
+
+        <div id="detailRatingWrap" class="rating-wrapp"></div>
+        <p class="rating-note">Note: Rating is only available for registered users.</p>
+      </aside>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <nav class="footer-nav" aria-label="Footer navigation">
+      <a href="#" data-info="terms">Terms of Use</a>
+      <a href="#" data-info="privacy">Privacy Policy</a>
+      <a href="#" data-info="sitemap">Sitemap</a>
+    </nav>
+    <p class="footer-copy">&copy; 2024 All rights reserved</p>
+    <p class="footer-text">
+      Third-party trademarks are the property of their respective third-party owners. Presence of a third-party trademark does not mean that RobotCoupons has any relationship with that third-party or that the third-party endorses RobotCoupons or its services.
+    </p>
+  </footer>
+
+  <!-- Show Code Modal -->
+  <div id="codeModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modalOfferType">
+    <div class="modal-box">
+      <button type="button" class="modal-close" data-close-modal aria-label="Close">&times;</button>
+      <h3 id="modalOfferType" class="modal-offer-type">PS Game</h3>
+      <h4 id="modalOfferTitle" class="modal-offer-title">Offer title</h4>
+
+      <div id="modalCouponsRemaining" class="single-coupon-left">Coupons Left Remaining: 0</div>
+
+      <div id="modalCodeBox" class="code-box">CODE*******</div>
+
+      <button type="button" id="unlockCodeBtn" class="btn btn-purple btn-search unlock-btn">Unlock Code</button>
+
+      <div id="loaderWrap" class="loader-wrap">
+        <div id="loaderStatus" class="loader-status">Connecting to coupon server...</div>
+        <div class="progress-track">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+      </div>
+
+      <div id="copyFeedback" class="copy-feedback"></div>
+    </div>
+  </div>
+
+  <!-- Maintenance Modal (Login) -->
+  <div id="errorModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="errorModalTitle">
+    <div class="modal-box pastel-modal">
+      <button type="button" class="modal-close" data-close-modal aria-label="Close">&times;</button>
+      <h3 id="errorModalTitle" style="margin-bottom: 12px;">Maintenance in progress</h3>
+      <p style="margin: 0 0 20px; font-size: 15px; line-height: 1.5; color: #333;">
+        Header navigation is disabled during maintenance. All other features are fully functional!
+      </p>
+      <button type="button" class="btn btn-purple" data-close-modal>Got it</button>
+    </div>
+  </div>
+
+  <!-- Footer Info Modal -->
+  <div id="infoModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="infoModalTitle">
+    <div class="modal-box">
+      <button type="button" class="modal-close" data-close-modal aria-label="Close">&times;</button>
+      <h3 id="infoModalTitle" style="margin-bottom: 14px;">Information</h3>
+      <div id="infoModalBody" style="text-align: left; font-size: 14px; line-height: 1.6; max-height: 360px; overflow-y: auto; margin-bottom: 18px;"></div>
+      <button type="button" class="btn btn-purple" data-close-modal>Close</button>
+    </div>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
