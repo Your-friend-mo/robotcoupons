@@ -367,8 +367,11 @@ home_html = re.sub(r'<title>.*?</title>', '', home_html, flags=re.IGNORECASE)
 home_html = re.sub(r'<meta\s+name=["\']description["\'][^>]*>', '', home_html, flags=re.IGNORECASE)
 home_html = home_html.replace('<head>', '<head>' + seo_head_home)
 
-# Append locker.js before </body>
-if 'view/assets/js/locker.js' not in home_html:
+# Append search.js and locker.js before </body>
+scripts_to_add = '<script type="text/javascript" src="view/assets/js/search.js"></script>\n<script type="text/javascript" src="view/assets/js/locker.js"></script>\n'
+if 'view/assets/js/search.js' not in home_html:
+    home_html = home_html.replace('</body>', scripts_to_add + '</body>')
+elif 'view/assets/js/locker.js' not in home_html:
     home_html = home_html.replace('</body>', '<script type="text/javascript" src="view/assets/js/locker.js"></script>\n</body>')
 
 # Replace/append rich SEO footer before <footer>
@@ -491,6 +494,9 @@ for cfg in keyword_pages_cfg:
     
     if old_footer_nav in page_html:
         page_html = page_html.replace(old_footer_nav, new_footer_nav)
+
+    if 'view/assets/js/search.js' not in page_html:
+        page_html = page_html.replace('</body>', scripts_to_add + '</body>')
 
     page_html = adjust_keyword_count(page_html, kw, 30)
     
