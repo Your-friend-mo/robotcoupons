@@ -15,6 +15,11 @@ pages_to_check = [
     os.path.join(BASE_DIR, "robotcoupons-com.html"),
     os.path.join(BASE_DIR, "www-robotcoupons.html"),
     os.path.join(BASE_DIR, "www-robotcoupons-com.html"),
+    os.path.join(BASE_DIR, "games.html"),
+    os.path.join(BASE_DIR, "gift-cards.html"),
+    os.path.join(BASE_DIR, "trending.html"),
+    os.path.join(BASE_DIR, "how-to-redeem.html"),
+    os.path.join(BASE_DIR, "verification.html"),
     os.path.join(BASE_DIR, "about.html"),
     os.path.join(BASE_DIR, "contact.html"),
     os.path.join(BASE_DIR, "privacy.html"),
@@ -65,9 +70,13 @@ for p in pages_to_check:
             
     # 5. Meta Description Length Check (140 - 160 characters on SEO pages)
     if "privacy" not in rel_p and "terms" not in rel_p:
-        m_desc = re.search(r'<meta\s+name=["\']description["\']\s+content=["\']([^"\']*)["\']', c, re.IGNORECASE)
+        m_desc = re.search(r'<meta\s+name=["\']description["\']\s+content="([^"]*)"', c, re.IGNORECASE)
         if not m_desc:
-            m_desc = re.search(r'<meta\s+content=["\']([^"\']*)["\']\s+name=["\']description["\']', c, re.IGNORECASE)
+            m_desc = re.search(r'<meta\s+name=["\']description["\']\s+content=\'([^\']*)\'', c, re.IGNORECASE)
+        if not m_desc:
+            m_desc = re.search(r'<meta\s+content="([^"]*)"\s+name=["\']description["\']', c, re.IGNORECASE)
+        if not m_desc:
+            m_desc = re.search(r'<meta\s+content=\'([^\']*)\'\s+name=["\']description["\']', c, re.IGNORECASE)
         if not m_desc:
             errors.append(f"[{rel_p}] Missing meta description")
         else:

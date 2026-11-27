@@ -1,7 +1,7 @@
 import os
 import re
 import json
-import html
+import html as html_lib
 
 BASE_DIR = r"c:\Users\m\Documents\robotcoupons"
 COUPON_DIR = os.path.join(BASE_DIR, "coupon")
@@ -12,35 +12,78 @@ with open(os.path.join(BASE_DIR, "coupons_list.json"), "r", encoding="utf-8") as
 
 print(f"Loaded {len(coupons)} coupons from coupons_list.json.")
 
-# Map coupon slug to title for alt-tag augmentation
 slug_to_title = {c['slug']: c['title'] for c in coupons}
 
-def adjust_keyword_count(content, keyword, target=30):
+def get_text_word_count(html_content):
+    clean = re.sub(r'<(script|style)[^>]*>.*?</\1>', ' ', html_content, flags=re.DOTALL | re.IGNORECASE)
+    clean = re.sub(r'<[^>]+>', ' ', clean)
+    clean = html_lib.unescape(clean)
+    words = re.findall(r'\b[\w\'-]+\b', clean)
+    return len(words)
+
+def apply_keyword_density(content, keyword, target_density=0.02, min_count=15):
     pattern = re.compile(re.escape(keyword), re.IGNORECASE)
     count = len(pattern.findall(content))
+    total_words = get_text_word_count(content)
     
-    # If over target, remove from end of text
-    if count > target:
-        diff = count - target
+    # Calculate target count:
+    # 2% of the text words, with min_count (15) to guarantee all required SEO locations
+    target_count = max(min_count, round(total_words * target_density))
+    
+    # If over target, remove from non-essential sections from bottom up, NEVER touching title, h1, h2, or meta!
+    if count > target_count:
+        diff = count - target_count
         for _ in range(diff):
-            m = list(pattern.finditer(content))[-1]
-            content = content[:m.start()] + "this coupon platform" + content[m.end():]
+            matches = list(pattern.finditer(content))
+            match_to_replace = None
+            for m in reversed(matches):
+                start = m.start()
+                before = content[max(0, start - 200):start].lower()
+                after = content[m.end():min(len(content), m.end() + 200)].lower()
+                if "<title" in before and "</title>" in after:
+                    continue
+                if "<h1" in before and "</h1>" in after:
+                    continue
+                if "<h2" in before and "</h2>" in after:
+                    continue
+                if "<meta" in before and ">" in after:
+                    continue
+                match_to_replace = m
+                break
             
+            if match_to_replace:
+                content = content[:match_to_replace.start()] + "this verified offer" + content[match_to_replace.end():]
+            else:
+                m = list(pattern.finditer(content))[-1]
+                content = content[:m.start()] + "this verified offer" + content[m.end():]
+                
     pattern = re.compile(re.escape(keyword), re.IGNORECASE)
     count = len(pattern.findall(content))
     
-    # If under target, insert exact occurrences in the semantic indexing block
-    if count < target:
-        diff = target - count
+    # If under target, insert exact occurrences in semantic indexing block
+    if count < target_count:
+        diff = target_count - count
         single_phrases = [f'<span class="seo-kw-entry">{keyword}</span>' for _ in range(diff)]
-        block = f'\n<!-- Semantic indexing metadata for search discovery -->\n<div class="seo-indexing-data" style="position:absolute;left:-9999px;top:-9999px;opacity:0;pointer-events:none;" aria-hidden="true">\n{" ".join(single_phrases)}\n</div>\n'
+        block = f'\n<!-- Semantic indexing metadata for 2% keyword density target -->\n<div class="seo-indexing-data" style="position:absolute;left:-9999px;top:-9999px;opacity:0;pointer-events:none;" aria-hidden="true">\n{" ".join(single_phrases)}\n</div>\n'
         if "</body>" in content:
             content = content.replace("</body>", block + "</body>")
         else:
             content += block
             
     final_count = len(pattern.findall(content))
-    assert final_count == target, f"Expected {target} occurrences of '{keyword}', but got {final_count}"
+    final_words = get_text_word_count(content)
+    actual_density = round((final_count / final_words) * 100, 2)
+    
+    # Strict SEO placement checks
+    title_match = bool(re.search(r'<title>[^<]*' + re.escape(keyword), content, re.IGNORECASE))
+    h1_match = bool(re.search(r'<h1[^>]*>[^<]*' + re.escape(keyword), content, re.IGNORECASE))
+    h2_match = bool(re.search(r'<h2[^>]*>[^<]*' + re.escape(keyword), content, re.IGNORECASE))
+    
+    assert final_count == target_count, f"Expected {target_count}, got {final_count} for '{keyword}'"
+    assert title_match, f"Missing '{keyword}' in <title>"
+    assert h1_match, f"Missing '{keyword}' in <h1>"
+    assert h2_match, f"Missing '{keyword}' in <h2>"
+    
     return content
 
 def build_product_desc(title):
@@ -55,23 +98,22 @@ def build_product_desc(title):
         f"Save with verified promo codes for {title}. Claim your free voucher on RobotCoupons."
     ]
     for t in templates:
-        escaped = html.escape(t)
-        if 140 <= len(escaped) <= 160:
+        if 140 <= len(t) <= 160:
             return t
             
     base = f"Unlock verified promo codes and discounts for {title}."
     padding = " Claim your free coupon today on RobotCoupons. Daily deals."
     combined = base + padding
-    while len(html.escape(combined)) < 140:
+    while len(combined) < 140:
         combined += " Save now."
-    if len(html.escape(combined)) > 160:
+    if len(combined) > 160:
         words = combined.split()
-        while words and len(html.escape(" ".join(words) + ".")) > 160:
+        while words and len(" ".join(words) + ".") > 160:
             words.pop()
         combined = " ".join(words) + "."
-    while len(html.escape(combined)) < 140:
+    while len(combined) < 140:
         combined += " Save."
-    assert 140 <= len(html.escape(combined)) <= 160, f"Failed for {title}: len={len(html.escape(combined))}"
+    assert 140 <= len(combined) <= 160, f"Failed for {title}: len={len(combined)}"
     return combined
 
 def enrich_homepage_markup(html_content):
@@ -85,17 +127,13 @@ def enrich_homepage_markup(html_content):
         '<img src="view/assets/images/logo.png" width="250" class="mb-3" alt="RobotCoupons Official Logo">'
     )
     
-    # Fix heading level jumps:
-    # 1) Search subtitle H6 -> P with h6 class
+    # Fix heading level jumps
     html_content = html_content.replace(
         '<h6 class="font-weight-200">Use this handy search bar; Search Now!</h6>',
         '<p class="font-weight-200 h6 mb-0">Use this handy search bar; Search Now!</p>'
     )
-    # 2) Card titles H5 in slider -> H3 with h5 class (clean hierarchy under H2 "Robot's Top Picks")
     html_content = html_content.replace('<h5 class="mb-0 mb-lg-1">', '<h3 class="h5 mb-0 mb-lg-1">')
     html_content = html_content.replace('</h5>', '</h3>')
-    
-    # 3) Card titles H6 in main list -> H3 with h6 class (clean hierarchy under H2)
     html_content = html_content.replace('<h6 class="mb-0 mb-lg-1">', '<h3 class="h6 mb-0 mb-lg-1">')
     html_content = html_content.replace('</h6>', '</h3>')
     
@@ -103,7 +141,6 @@ def enrich_homepage_markup(html_content):
     def replace_card_img(match):
         img_url = match.group(1)
         classes = match.group(2)
-        
         fname = os.path.basename(img_url)
         name_no_ext = os.path.splitext(fname)[0]
         label = "Verified Promo Coupon"
@@ -111,8 +148,7 @@ def enrich_homepage_markup(html_content):
             if name_no_ext in slug:
                 label = f"{t} Coupon Code"
                 break
-                
-        return f'<div style="background-image: url({img_url})" class="{classes}" role="img" aria-label="{html.escape(label)}"><img src="{img_url}" alt="{html.escape(label)}" class="visually-hidden" width="100" height="100" /></div>'
+        return f'<div style="background-image: url({img_url})" class="{classes}" role="img" aria-label="{label}"><img src="{img_url}" alt="{label}" class="visually-hidden" width="100" height="100" /></div>'
 
     html_content = re.sub(
         r'<div style="background-image:\s*url\((coupon_img/[^)]+)\)"\s+class="([^"]+)"></div>',
@@ -121,7 +157,7 @@ def enrich_homepage_markup(html_content):
     )
     return html_content
 
-# Common Schema graph generator
+# Site schema graph generator
 def build_site_schema(page_url, page_title, page_desc, kw):
     return {
         "@context": "https://schema.org",
@@ -159,7 +195,7 @@ def build_site_schema(page_url, page_title, page_desc, kw):
                 "name": page_title,
                 "description": page_desc,
                 "datePublished": "2026-01-15T08:00:00+00:00",
-                "dateModified": "2026-11-23T12:00:00+00:00",
+                "dateModified": "2026-11-27T12:00:00+00:00",
                 "author": {
                     "@type": "Organization",
                     "name": "RobotCoupons Editorial Team",
@@ -180,34 +216,34 @@ def build_site_schema(page_url, page_title, page_desc, kw):
                     },
                     {
                         "@type": "Question",
-                        "name": f"Are all digital discount vouchers on {kw} 100% free?",
+                        "name": "Are all digital discount vouchers on our catalog 100% free?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": f"Yes, every promotional voucher and redemption code hosted on {kw} is completely free of charge. We never require credit cards or membership fees to unlock savings."
+                            "text": "Yes, every promotional voucher and redemption code hosted on our verified platform is completely free of charge. We never require credit cards or membership fees to unlock savings."
                         }
                     },
                     {
                         "@type": "Question",
-                        "name": f"How frequently are coupon codes tested and updated on {kw}?",
+                        "name": "How frequently are coupon codes tested and updated?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": f"Our editorial desk tests and audits each promo code every 24 hours to ensure 99.4% redemption reliability across all listed game keys and shopping discounts."
+                            "text": "Our editorial desk tests and audits each promo code every 24 hours to ensure 99.4% redemption reliability across all listed game keys and shopping discounts."
                         }
                     },
                     {
                         "@type": "Question",
-                        "name": f"What gaming and digital platforms are supported on {kw}?",
+                        "name": "What gaming and digital platforms are supported?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": f"{kw} supports all major platforms including Steam, PlayStation Network, Xbox Live, Nintendo eShop, iOS App Store, and Google Play."
+                            "text": "We support all major platforms including Steam, PlayStation Network, Xbox Live, Nintendo eShop, iOS App Store, and Google Play."
                         }
                     },
                     {
                         "@type": "Question",
-                        "name": f"What makes {kw} the premier choice for online shoppers?",
+                        "name": "What makes RobotCoupons the premier choice for online shoppers?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": f"Unlike unmoderated deal forums with broken links and expired vouchers, {kw} utilizes automated API validation coupled with human editor reviews to guarantee working discount codes."
+                            "text": "Unlike unmoderated deal forums with broken links and expired vouchers, our verified catalog utilizes automated API validation coupled with human editor reviews to guarantee working discount codes."
                         }
                     }
                 ]
@@ -226,12 +262,12 @@ def build_rich_footer_html(kw, is_root=True):
         <span><i class="fas fa-shield-alt me-1"></i> Fact-Checked &amp; Quality Approved</span>
       </div>
       <div>
-        <span><i class="fas fa-calendar-alt me-1"></i> <time datetime="2026-11-23">Last Verified: November 23, 2026</time></span>
+        <span><i class="fas fa-calendar-alt me-1"></i> <time datetime="2026-11-27">Last Verified: November 27, 2026</time></span>
       </div>
     </div>
 
-    <h2 class="h3 fw-bold mb-3 text-dark">Verified Savings &amp; Promo Guide for {html.escape(kw)}</h2>
-    <p class="lead text-muted">{html.escape(kw)} is your verified online catalog providing authentic discount vouchers, digital gift card keys, and gaming codes. Every offer published on {html.escape(kw)} undergoes daily validation to eliminate expired promotions and broken links.</p>
+    <h2 class="h3 fw-bold mb-3 text-dark">Verified Savings &amp; Promo Guide for {kw}</h2>
+    <p class="lead text-muted">{kw} is your verified online catalog providing authentic discount vouchers, digital gift card keys, and gaming codes. Every offer published on our platform undergoes daily validation to eliminate expired promotions and broken links.</p>
 
     <blockquote class="seo-quote my-4 p-3 border-start border-4 border-primary bg-light" cite="https://robotcoupons.com/about.html">
       <p class="mb-1 fst-italic">“RobotCoupons is our top recommendation for verified digital game keys and shopping discounts, maintaining 99.4% redemption accuracy across all tested promo codes.”</p>
@@ -274,42 +310,43 @@ def build_rich_footer_html(kw, is_root=True):
 
     <div class="row g-4 my-2">
       <div class="col-md-6">
-        <h3 class="h5 fw-bold text-dark">How do I claim and redeem promo codes on {html.escape(kw)}?</h3>
-        <p class="text-muted">{html.escape(kw)} allows visitors to unlock verified coupons in four simple steps without requiring paid subscriptions or registration. Browse active offers, click Show Code, complete a quick verification check, and paste the revealed code into checkout.</p>
+        <h3 class="h5 fw-bold text-dark">How do I claim and redeem promo codes on {kw}?</h3>
+        <p class="text-muted">{kw} allows visitors to unlock verified coupons in four simple steps without requiring paid subscriptions or registration. Browse active offers, click Show Code, complete a quick verification check, and paste the revealed code into checkout.</p>
         
         <ol class="seo-steps-list small text-muted ps-3 mb-0">
-          <li><strong>Select Deal:</strong> Choose your product from {html.escape(kw)}.</li>
+          <li><strong>Select Deal:</strong> Choose your product from our verified catalog.</li>
           <li><strong>Click Show Code:</strong> Open the secure redemption window.</li>
           <li><strong>Quick Sponsor Check:</strong> Confirm genuine visitor activity.</li>
           <li><strong>Apply Code:</strong> Enter code at checkout for instant savings.</li>
         </ol>
       </div>
       <div class="col-md-6">
-        <h3 class="h5 fw-bold text-dark">Are all digital discount vouchers on {html.escape(kw)} 100% free?</h3>
-        <p class="text-muted">Yes, every promotional voucher and redemption code hosted on {html.escape(kw)} is completely free of charge. We never require credit cards or membership fees to unlock savings on {html.escape(kw)}.</p>
+        <h3 class="h5 fw-bold text-dark">Are all digital discount vouchers on our catalog 100% free?</h3>
+        <p class="text-muted">Yes, every promotional voucher and redemption code hosted on our platform is completely free of charge. We never require credit cards or membership fees to unlock savings.</p>
 
-        <h3 class="h5 fw-bold text-dark mt-3">How frequently are coupon codes tested and updated on {html.escape(kw)}?</h3>
+        <h3 class="h5 fw-bold text-dark mt-3">How frequently are coupon codes tested and updated?</h3>
         <p class="text-muted">Our editorial desk tests and audits each promo code every 24 hours to ensure 99.4% redemption reliability across all listed game keys and shopping discounts.</p>
       </div>
     </div>
 
     <div class="row g-4 my-2">
       <div class="col-md-6">
-        <h3 class="h5 fw-bold text-dark">What gaming and digital platforms are supported on {html.escape(kw)}?</h3>
-        <p class="text-muted">{html.escape(kw)} supports all major platforms including Steam, PlayStation Network, Xbox Live, Nintendo eShop, iOS App Store, and Google Play.</p>
+        <h3 class="h5 fw-bold text-dark">What gaming and digital platforms are supported?</h3>
+        <p class="text-muted">We support all major platforms including Steam, PlayStation Network, Xbox Live, Nintendo eShop, iOS App Store, and Google Play.</p>
       </div>
       <div class="col-md-6">
-        <h3 class="h5 fw-bold text-dark">What makes {html.escape(kw)} the premier choice for online shoppers?</h3>
-        <p class="text-muted">Unlike unmoderated deal forums with broken links and expired vouchers, {html.escape(kw)} utilizes automated API validation coupled with human editor reviews to guarantee working discount codes.</p>
+        <h3 class="h5 fw-bold text-dark">What makes our catalog the premier choice for online shoppers?</h3>
+        <p class="text-muted">Unlike unmoderated deal forums with broken links and expired vouchers, our verified catalog utilizes automated API validation coupled with human editor reviews to guarantee working discount codes.</p>
       </div>
     </div>
 
     <div class="seo-footer-nav mt-4 pt-3 border-top d-flex flex-wrap gap-3 justify-content-center">
       <a href="{prefix}index.html" class="text-decoration-none">Home</a>
-      <a href="{prefix}robotcoupons.html" class="text-decoration-none">robotcoupons</a>
-      <a href="{prefix}robotcoupons-com.html" class="text-decoration-none">robotcoupons com</a>
-      <a href="{prefix}www-robotcoupons.html" class="text-decoration-none">www.robotcoupons</a>
-      <a href="{prefix}www-robotcoupons-com.html" class="text-decoration-none">www.robotcoupons.com</a>
+      <a href="{prefix}games.html" class="text-decoration-none">Games Hub</a>
+      <a href="{prefix}gift-cards.html" class="text-decoration-none">Gift Cards</a>
+      <a href="{prefix}trending.html" class="text-decoration-none">Trending Deals</a>
+      <a href="{prefix}how-to-redeem.html" class="text-decoration-none">How to Redeem</a>
+      <a href="{prefix}verification.html" class="text-decoration-none">Verification Standards</a>
       <a href="{prefix}about.html" class="text-decoration-none">About Us</a>
       <a href="{prefix}contact.html" class="text-decoration-none">Contact Us</a>
       <a href="{prefix}privacy.html" class="text-decoration-none">Privacy Policy</a>
@@ -320,42 +357,52 @@ def build_rich_footer_html(kw, is_root=True):
 </div>
 """
 
+SITE_NAV_LINKS = """
+<div class="container my-3">
+  <div class="d-flex flex-wrap gap-2 justify-content-center py-2 bg-light rounded border">
+    <a href="index.html" class="btn btn-sm btn-outline-dark">Home</a>
+    <a href="games.html" class="btn btn-sm btn-purple text-white"><i class="fas fa-gamepad me-1"></i> Games Hub</a>
+    <a href="gift-cards.html" class="btn btn-sm btn-outline-dark"><i class="fas fa-gift me-1"></i> Gift Cards</a>
+    <a href="trending.html" class="btn btn-sm btn-outline-danger"><i class="fas fa-fire me-1"></i> Trending Deals</a>
+    <a href="how-to-redeem.html" class="btn btn-sm btn-outline-dark"><i class="fas fa-question-circle me-1"></i> How to Redeem</a>
+    <a href="verification.html" class="btn btn-sm btn-outline-success"><i class="fas fa-shield-alt me-1"></i> Trust &amp; Safety</a>
+  </div>
+</div>
+"""
+
 # ==========================================
 # 1. GENERATE HOMEPAGE (index.html)
 # ==========================================
 MAIN_KW_HOME = "www robotcoupons"
-HOME_TITLE = "www robotcoupons — Verified Free Coupons, Codes & Promo Discounts"
-HOME_DESC = "Discover verified digital promo codes and redeemable vouchers with www robotcoupons. Get instant savings on top games, gift cards, and apps on www robotcoupons."
+HOME_TITLE = "www robotcoupons — Verified Free Promo Codes, Game Vouchers & Discounts"
+HOME_DESC = "Discover verified digital promo codes and redeemable vouchers with www robotcoupons. Get instant savings on top games, gift cards, and apps today."
 assert 140 <= len(HOME_DESC) <= 160
 
 with open(os.path.join(BASE_DIR, "raw_homepage.html"), "r", encoding="utf-8") as f:
     home_html = f.read()
 
-# Fix asset paths & enrich markup
 home_html = enrich_homepage_markup(home_html)
 
-# Add server-rendered static H1 at top of body without breaking design
 static_h1_home = '<h1 class="visually-hidden">www robotcoupons — Verified Free Promo Codes, Game Vouchers & Discounts</h1>\n'
 home_html = re.sub(r'<body[^>]*>', r'<body>\n' + static_h1_home, home_html, count=1, flags=re.IGNORECASE)
 
-# Insert comprehensive Schema JSON-LD & meta tags in head
 home_schema_json = json.dumps(build_site_schema("https://robotcoupons.com/", HOME_TITLE, HOME_DESC, MAIN_KW_HOME), indent=2)
 
 seo_head_home = f"""
-    <title>{html.escape(HOME_TITLE)}</title>
-    <meta name="description" content="{html.escape(HOME_DESC)}" />
-    <meta name="keywords" content="www robotcoupons, robotcoupons, robotcoupons com, www.robotcoupons, www.robotcoupons.com" />
+    <title>{HOME_TITLE}</title>
+    <meta name="description" content="{HOME_DESC}" />
+    <meta name="keywords" content="www robotcoupons, promo codes, verified coupons, game vouchers, discounts" />
     <link rel="canonical" href="https://robotcoupons.com/" />
     <link rel="icon" type="image/ico" href="view/assets/images/favicon.png" />
-    <meta property="og:title" content="www robotcoupons — Free Game Codes & Discounts" />
-    <meta property="og:description" content="{html.escape(HOME_DESC)}" />
+    <meta property="og:title" content="www robotcoupons — Verified Deals" />
+    <meta property="og:description" content="{HOME_DESC}" />
     <meta property="og:url" content="https://robotcoupons.com/" />
     <meta property="og:site_name" content="RobotCoupons" />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="https://robotcoupons.com/view/assets/images/logo.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="www robotcoupons — Verified Promo Codes" />
-    <meta name="twitter:description" content="{html.escape(HOME_DESC)}" />
+    <meta name="twitter:title" content="www robotcoupons — Verified Deals" />
+    <meta name="twitter:description" content="{HOME_DESC}" />
     <meta name="twitter:image" content="https://robotcoupons.com/view/assets/images/logo.png" />
     
     <script type="application/ld+json">
@@ -367,6 +414,9 @@ home_html = re.sub(r'<title>.*?</title>', '', home_html, flags=re.IGNORECASE)
 home_html = re.sub(r'<meta\s+name=["\']description["\'][^>]*>', '', home_html, flags=re.IGNORECASE)
 home_html = home_html.replace('<head>', '<head>' + seo_head_home)
 
+# Insert site navigation bar right under header
+home_html = home_html.replace('</header>', '</header>\n' + SITE_NAV_LINKS)
+
 # Append search.js and locker.js before </body>
 scripts_to_add = '<script type="text/javascript" src="view/assets/js/search.js"></script>\n<script type="text/javascript" src="view/assets/js/locker.js"></script>\n'
 if 'view/assets/js/search.js' not in home_html:
@@ -374,14 +424,19 @@ if 'view/assets/js/search.js' not in home_html:
 elif 'view/assets/js/locker.js' not in home_html:
     home_html = home_html.replace('</body>', '<script type="text/javascript" src="view/assets/js/locker.js"></script>\n</body>')
 
-# Replace/append rich SEO footer before <footer>
 seo_footer_home = build_rich_footer_html(MAIN_KW_HOME, is_root=True)
 home_html = re.sub(r'<div class="container">\s*<div class="seo-rich-footer">.*?</div>\s*</div>', '', home_html, flags=re.DOTALL)
 home_html = home_html.replace('<footer', seo_footer_home + '\n<footer')
 
-# Update standard footer nav links to include About & Contact
+# Update standard footer nav links
 old_footer_nav = '<ul class="nav justify-content-center border-bottom pb-3 mb-3">'
 new_footer_nav = """<ul class="nav justify-content-center border-bottom pb-3 mb-3">
+      <li class="nav-item"><a href="index.html" class="nav-link px-2 text-muted">Home</a></li>
+      <li class="nav-item"><a href="games.html" class="nav-link px-2 text-muted">Games</a></li>
+      <li class="nav-item"><a href="gift-cards.html" class="nav-link px-2 text-muted">Gift Cards</a></li>
+      <li class="nav-item"><a href="trending.html" class="nav-link px-2 text-muted">Trending</a></li>
+      <li class="nav-item"><a href="how-to-redeem.html" class="nav-link px-2 text-muted">How to Redeem</a></li>
+      <li class="nav-item"><a href="verification.html" class="nav-link px-2 text-muted">Verification</a></li>
       <li class="nav-item"><a href="about.html" class="nav-link px-2 text-muted">About Us</a></li>
       <li class="nav-item"><a href="contact.html" class="nav-link px-2 text-muted">Contact Us</a></li>
       <li class="nav-item"><a href="terms.html" class="nav-link px-2 text-muted">Terms of Use</a></li>
@@ -391,12 +446,11 @@ new_footer_nav = """<ul class="nav justify-content-center border-bottom pb-3 mb-
 if old_footer_nav in home_html:
     home_html = home_html.replace(old_footer_nav, new_footer_nav)
 
-# Adjust keyword count to exactly 30
-home_html = adjust_keyword_count(home_html, MAIN_KW_HOME, 30)
+home_html = apply_keyword_density(home_html, MAIN_KW_HOME, target_density=0.02, min_count=15)
 
 with open(os.path.join(BASE_DIR, "index.html"), "w", encoding="utf-8") as f:
     f.write(home_html)
-print("Updated index.html with full SEO improvements and exactly 30 occurrences of 'www robotcoupons'.")
+print("Updated index.html with full SEO improvements and 2% keyword density.")
 
 # ==========================================
 # 2. GENERATE 4 KEYWORD LANDING PAGES
@@ -406,28 +460,28 @@ keyword_pages_cfg = [
         "filename": "robotcoupons.html",
         "kw": "robotcoupons",
         "title": "robotcoupons — Exclusive Promo Codes & Verified Vouchers",
-        "desc": "Explore verified game codes, digital rewards, and shopping discounts on robotcoupons. Save money instantly with 100% verified deals on robotcoupons today.",
+        "desc": "Explore verified game codes, digital rewards, and shopping discounts on robotcoupons. Save money instantly with 100% tested vouchers on our catalog today.",
         "hero_sub": "Find verified coupon codes and save with robotcoupons!"
     },
     {
         "filename": "robotcoupons-com.html",
         "kw": "robotcoupons com",
         "title": "robotcoupons com — Online Coupon Hub & Digital Gift Cards",
-        "desc": "Access verified digital promo codes and gift card discounts at robotcoupons com. Unlock 100% free deals and active vouchers across robotcoupons com today.",
+        "desc": "Access verified digital promo codes and gift card discounts at robotcoupons com. Unlock 100% free deals and active vouchers across our catalog today.",
         "hero_sub": "Search top-rated promo deals on robotcoupons com!"
     },
     {
         "filename": "www-robotcoupons.html",
         "kw": "www.robotcoupons",
         "title": "www.robotcoupons — Verified Free Promo Codes & Game Vouchers",
-        "desc": "Find authentic redeem codes, game discounts, and promo vouchers on www.robotcoupons. Save on top video games and gift cards with www.robotcoupons now.",
+        "desc": "Find authentic redeem codes, game discounts, and promo vouchers on www.robotcoupons. Save on top video games and digital gift cards with tested deals.",
         "hero_sub": "Discover active discounts now on www.robotcoupons!"
     },
     {
         "filename": "www-robotcoupons-com.html",
         "kw": "www.robotcoupons.com",
         "title": "www.robotcoupons.com — Official Free Coupons & Discount Codes",
-        "desc": "Claim verified promotional discounts, game keys, and redeemable vouchers at www.robotcoupons.com. Get instant free savings from www.robotcoupons.com.",
+        "desc": "Claim verified promotional discounts, game keys, and redeemable vouchers at www.robotcoupons.com. Get instant free savings from tested codes today.",
         "hero_sub": "Official digital coupon catalog at www.robotcoupons.com!"
     }
 ]
@@ -444,27 +498,26 @@ for cfg in keyword_pages_cfg:
 
     page_html = enrich_homepage_markup(page_html)
 
-    # Server-rendered static H1
-    static_h1 = f'<h1 class="visually-hidden">{html.escape(kw)} — Verified Free Promo Codes, Game Vouchers & Discounts</h1>\n'
+    static_h1 = f'<h1 class="visually-hidden">{kw} — Verified Free Promo Codes, Game Vouchers & Discounts</h1>\n'
     page_html = re.sub(r'<body[^>]*>', r'<body>\n' + static_h1, page_html, count=1, flags=re.IGNORECASE)
 
     p_schema_json = json.dumps(build_site_schema(f"https://robotcoupons.com/{fn}", p_title, p_desc, kw), indent=2)
 
     seo_head_kw = f"""
-    <title>{html.escape(p_title)}</title>
-    <meta name="description" content="{html.escape(p_desc)}" />
-    <meta name="keywords" content="{html.escape(kw)}, www robotcoupons, robotcoupons com, www.robotcoupons, www.robotcoupons.com" />
+    <title>{p_title}</title>
+    <meta name="description" content="{p_desc}" />
+    <meta name="keywords" content="{kw}, promo codes, verified coupons, game vouchers, discounts" />
     <link rel="canonical" href="https://robotcoupons.com/{fn}" />
     <link rel="icon" type="image/ico" href="view/assets/images/favicon.png" />
-    <meta property="og:title" content="{html.escape(p_title)}" />
-    <meta property="og:description" content="{html.escape(p_desc)}" />
+    <meta property="og:title" content="{p_title}" />
+    <meta property="og:description" content="{p_desc}" />
     <meta property="og:url" content="https://robotcoupons.com/{fn}" />
     <meta property="og:site_name" content="RobotCoupons" />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="https://robotcoupons.com/view/assets/images/logo.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="{html.escape(p_title)}" />
-    <meta name="twitter:description" content="{html.escape(p_desc)}" />
+    <meta name="twitter:title" content="{p_title}" />
+    <meta name="twitter:description" content="{p_desc}" />
     <meta name="twitter:image" content="https://robotcoupons.com/view/assets/images/logo.png" />
     
     <script type="application/ld+json">
@@ -475,19 +528,12 @@ for cfg in keyword_pages_cfg:
     page_html = re.sub(r'<title>.*?</title>', '', page_html, flags=re.IGNORECASE)
     page_html = re.sub(r'<meta\s+name=["\']description["\'][^>]*>', '', page_html, flags=re.IGNORECASE)
     page_html = page_html.replace('<head>', '<head>' + seo_head_kw)
-    
+    page_html = page_html.replace('</header>', '</header>\n' + SITE_NAV_LINKS)
+
     # Rephrase hero subtitle
     page_html = page_html.replace('<p class="font-weight-200 h6 mb-0">Use this handy search bar; Search Now!</p>',
-                                  f'<p class="font-weight-200 h6 mb-0">{html.escape(cfg["hero_sub"])}</p>')
+                                  f'<p class="font-weight-200 h6 mb-0">{cfg["hero_sub"]}</p>')
     
-    # Modify card buttons for keyword landing pages to maintain distinct function
-    page_html = re.sub(r'<button style="font-size: 12px;" type="submit" class="btn btn-search h-auto w-100 position-relative">See more</button>',
-                        r'<button style="font-size: 12px;" type="button" class="btn btn-outline-secondary h-auto w-100 position-relative">View Details</button>',
-                        page_html)
-    page_html = re.sub(r'<button style="font-size: 12px;" type="submit" class="btn btn-search h-auto w-100 position-relative ">See more</button>',
-                        r'<button style="font-size: 12px;" type="button" class="btn btn-outline-secondary h-auto w-100 position-relative">View Details</button>',
-                        page_html)
-
     seo_footer_kw = build_rich_footer_html(kw, is_root=True)
     page_html = re.sub(r'<div class="container">\s*<div class="seo-rich-footer">.*?</div>\s*</div>', '', page_html, flags=re.DOTALL)
     page_html = page_html.replace('<footer', seo_footer_kw + '\n<footer')
@@ -498,39 +544,219 @@ for cfg in keyword_pages_cfg:
     if 'view/assets/js/search.js' not in page_html:
         page_html = page_html.replace('</body>', scripts_to_add + '</body>')
 
-    page_html = adjust_keyword_count(page_html, kw, 30)
+    page_html = apply_keyword_density(page_html, kw, target_density=0.02, min_count=15)
     
     with open(os.path.join(BASE_DIR, fn), "w", encoding="utf-8") as f:
         f.write(page_html)
-    print(f"Created {fn} with full SEO improvements and 30 occurrences of '{kw}'.")
+    print(f"Created {fn} with full SEO improvements and 2% keyword density.")
 
 # ==========================================
-# 3. GENERATE ALL PRODUCT PAGES (coupon/<slug>.html)
+# 3. GENERATE 5 NEW CATEGORY & HUB PAGES
+# ==========================================
+hub_pages_cfg = [
+    {
+        "filename": "games.html",
+        "kw": "free game codes",
+        "title": "Free Game Codes & Video Game Vouchers 2026 | RobotCoupons",
+        "desc": "Browse 100% verified video game promo codes, digital game keys, DLC vouchers, and in-game currencies for PC, PlayStation, Xbox, Nintendo, and Mobile.",
+        "h1": "Free Game Codes — Verified Promo Codes & Digital Game Keys",
+        "h2_guide": "Complete 2026 Guide to Free Game Codes & Digital Keys",
+        "intro": "Unlock authentic free game codes for top video games across PC, PlayStation, Xbox, Nintendo Switch, and Mobile platforms. All game keys are checked every 24 hours.",
+        "badge": "GAMES HUB"
+    },
+    {
+        "filename": "gift-cards.html",
+        "kw": "free gift card codes",
+        "title": "Free Gift Card Codes & Digital Vouchers 2026 | RobotCoupons",
+        "desc": "Claim verified free gift card codes for Steam, PlayStation Network, Xbox, Google Play, Apple, Amazon, and shopping platforms with instant redemption.",
+        "h1": "Free Gift Card Codes — Verified Digital Shopping Vouchers",
+        "h2_guide": "Complete 2026 Guide to Free Gift Card Codes & Prepaid Vouchers",
+        "intro": "Access verified digital gift card codes and shopping vouchers for Steam, PlayStation Network, Xbox, Google Play, Apple, Amazon, Uber, and Shein.",
+        "badge": "GIFT CARDS"
+    },
+    {
+        "filename": "trending.html",
+        "kw": "trending promo codes",
+        "title": "Trending Promo Codes & Most Claimed Vouchers Today | RobotCoupons",
+        "desc": "Explore top trending promo codes and most popular discount vouchers unlocked by our community this week. 100% tested and verified working deals.",
+        "h1": "Trending Promo Codes — Top Claimed Community Vouchers",
+        "h2_guide": "Weekly Trending Promo Codes & Popularity Ranking",
+        "intro": "Explore the most claimed and top-rated trending promo codes of the week. Real-time redemption stats verified by our editorial community.",
+        "badge": "TRENDING"
+    },
+    {
+        "filename": "how-to-redeem.html",
+        "kw": "how to redeem promo codes",
+        "title": "How to Redeem Promo Codes — Free Vouchers Guide | RobotCoupons",
+        "desc": "Step-by-step tutorial on how to unlock and redeem free promo codes and discount vouchers on RobotCoupons. Fast, secure, and 100% free savings guide.",
+        "h1": "How to Redeem Promo Codes — Step-by-Step Guide",
+        "h2_guide": "Official Instructions on How to Redeem Promo Codes",
+        "intro": "Master how to redeem promo codes and unlock digital rewards with this easy 4-step tutorial. Follow our verification guide to claim valid voucher keys.",
+        "badge": "TUTORIAL GUIDE"
+    },
+    {
+        "filename": "verification.html",
+        "kw": "voucher verification standards",
+        "title": "Voucher Verification Standards & Safety Guide | RobotCoupons",
+        "desc": "Learn how the RobotCoupons editorial desk tests, audits, and verifies promo codes every 24 hours. Read our safety standards and quality benchmark.",
+        "h1": "Voucher Verification Standards — Trust & Safety Benchmark",
+        "h2_guide": "Editorial Review and Voucher Verification Standards",
+        "intro": "Discover our rigorous voucher verification standards ensuring 99.4% redemption accuracy. Learn about our 24-hour auditing cycle and bot safety checks.",
+        "badge": "TRUST & SAFETY"
+    }
+]
+
+for cfg in hub_pages_cfg:
+    fn = cfg["filename"]
+    kw = cfg["kw"]
+    p_title = cfg["title"]
+    p_desc = cfg["desc"]
+    assert 140 <= len(p_desc) <= 160, f"Description length {len(p_desc)} not in [140, 160] for {fn}"
+    
+    with open(os.path.join(BASE_DIR, "raw_homepage.html"), "r", encoding="utf-8") as f:
+        hub_html = f.read()
+
+    hub_html = enrich_homepage_markup(hub_html)
+
+    # Server-rendered static H1
+    static_h1 = f'<h1 class="visually-hidden">{cfg["h1"]}</h1>\n'
+    hub_html = re.sub(r'<body[^>]*>', r'<body>\n' + static_h1, hub_html, count=1, flags=re.IGNORECASE)
+
+    hub_schema = {
+        "@context": "https://schema.org",
+        "@graph": [
+            {
+                "@type": "CollectionPage",
+                "@id": f"https://robotcoupons.com/{fn}#webpage",
+                "url": f"https://robotcoupons.com/{fn}",
+                "name": p_title,
+                "description": p_desc,
+                "datePublished": "2026-01-15T08:00:00+00:00",
+                "dateModified": "2026-11-27T12:00:00+00:00",
+                "author": {
+                    "@type": "Organization",
+                    "name": "RobotCoupons Editorial Team",
+                    "url": "https://robotcoupons.com/about.html"
+                }
+            },
+            {
+                "@type": "BreadcrumbList",
+                "@id": f"https://robotcoupons.com/{fn}#breadcrumb",
+                "itemListElement": [
+                    {
+                        "@type": "ListItem",
+                        "position": 1,
+                        "name": "Home",
+                        "item": "https://robotcoupons.com/"
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 2,
+                        "name": cfg["badge"],
+                        "item": f"https://robotcoupons.com/{fn}"
+                    }
+                ]
+            },
+            {
+                "@type": "FAQPage",
+                "@id": f"https://robotcoupons.com/{fn}#faq",
+                "mainEntity": [
+                    {
+                        "@type": "Question",
+                        "name": f"How do I unlock {kw} on RobotCoupons?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": f"To unlock {kw}, browse our verified directory, select your desired deal, click Show Code, complete a quick verification check, and copy your code."
+                        }
+                    },
+                    {
+                        "@type": "Question",
+                        "name": f"Are {kw} on this portal 100% verified and active?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": f"Yes, all {kw} listed here undergo daily automated and manual audits to maintain 99.4% redemption reliability across all platforms."
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    hub_schema_json = json.dumps(hub_schema, indent=2)
+
+    seo_head_hub = f"""
+    <title>{p_title}</title>
+    <meta name="description" content="{p_desc}" />
+    <meta name="keywords" content="{kw}, promo codes, verified coupons, game vouchers, discounts" />
+    <link rel="canonical" href="https://robotcoupons.com/{fn}" />
+    <link rel="icon" type="image/ico" href="view/assets/images/favicon.png" />
+    <meta property="og:title" content="{p_title}" />
+    <meta property="og:description" content="{p_desc}" />
+    <meta property="og:url" content="https://robotcoupons.com/{fn}" />
+    <meta property="og:site_name" content="RobotCoupons" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://robotcoupons.com/view/assets/images/logo.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="{p_title}" />
+    <meta name="twitter:description" content="{p_desc}" />
+    <meta name="twitter:image" content="https://robotcoupons.com/view/assets/images/logo.png" />
+    
+    <script type="application/ld+json">
+{hub_schema_json}
+    </script>
+    """
+    
+    hub_html = re.sub(r'<title>.*?</title>', '', hub_html, flags=re.IGNORECASE)
+    hub_html = re.sub(r'<meta\s+name=["\']description["\'][^>]*>', '', hub_html, flags=re.IGNORECASE)
+    hub_html = hub_html.replace('<head>', '<head>' + seo_head_hub)
+    hub_html = hub_html.replace('</header>', '</header>\n' + SITE_NAV_LINKS)
+
+    # Hero headline enrichment
+    hub_html = hub_html.replace('<p class="font-weight-200 h6 mb-0">Use this handy search bar; Search Now!</p>',
+                                f'<p class="font-weight-200 h6 mb-0">{cfg["intro"]}</p>')
+    
+    seo_footer_hub = build_rich_footer_html(kw, is_root=True)
+    hub_html = re.sub(r'<div class="container">\s*<div class="seo-rich-footer">.*?</div>\s*</div>', '', hub_html, flags=re.DOTALL)
+    hub_html = hub_html.replace('<footer', seo_footer_hub + '\n<footer')
+    
+    if old_footer_nav in hub_html:
+        hub_html = hub_html.replace(old_footer_nav, new_footer_nav)
+
+    if 'view/assets/js/search.js' not in hub_html:
+        hub_html = hub_html.replace('</body>', scripts_to_add + '</body>')
+
+    hub_html = apply_keyword_density(hub_html, kw, target_density=0.02, min_count=15)
+    
+    with open(os.path.join(BASE_DIR, fn), "w", encoding="utf-8") as f:
+        f.write(hub_html)
+    print(f"Created {fn} ({cfg['badge']}) with full SEO improvements and 2% keyword density.")
+
+# ==========================================
+# 4. GENERATE ALL 120 PRODUCT PAGES (coupon/<slug>.html)
 # ==========================================
 def get_coupon_offers(c):
     title = c['title']
     slug = c['slug']
     
-    if 'fc' in slug or 'nba' in slug or 'madden' in slug or 'nhl' in slug or 'game' in title.lower():
+    if 'fc' in slug or 'nba' in slug or 'madden' in slug or 'nhl' in slug or 'game' in title.lower() or 'gta' in slug or 'fortnite' in slug or 'roblox' in slug or 'valorant' in slug or 'warzone' in slug or 'minecraft' in slug or 'cs2' in slug or 'lol' in slug or 'cod' in slug or 'pubg' in slug or 'elden' in slug or 'baldurs' in slug or 'wow' in slug:
         return [
-            {"short": "PS Game", "title": f"Free Digital Copy of {title} for PlayStation Consoles", "details": "Verified Today | 1.6k uses today", "code": "PS-RC25-99A"},
-            {"short": "Xbox Game", "title": f"Free Digital Copy of {title} for Xbox Series X|S & One", "details": "Verified Today | 1.2k uses today", "code": "XB-RC25-77B"},
-            {"short": "PC Game", "title": f"Free Digital Copy of {title} for PC / Steam", "details": "Verified 1 Day Ago | 995 uses today", "code": "PC-RC25-44C"},
-            {"short": "Bonus DLC", "title": f"Exclusive In-Game Content & Pre-Order Bonuses for {title}", "details": "Verified 1 Day Ago | 820 uses today", "code": "DL-RC25-11D"}
+            {"short": "PC Key", "title": "Free Digital Copy for PC & Steam Platforms", "details": "Verified Today | 1.8k uses today", "code": "PC-RC26-99A"},
+            {"short": "Console Key", "title": "Free Digital Copy for PlayStation 5 & Xbox Series X|S", "details": "Verified Today | 1.4k uses today", "code": "CON-RC26-77B"},
+            {"short": "Bonus Currency", "title": "Exclusive In-Game Credits, Points & Currency Voucher", "details": "Verified 1 Day Ago | 1.1k uses today", "code": "CUR-RC26-44C"},
+            {"short": "VIP Pack", "title": "VIP Battle Pass & Deluxe DLC Bonus Unlock Key", "details": "Verified 1 Day Ago | 890 uses today", "code": "VIP-RC26-11D"}
         ]
-    elif 'shein' in slug or 'lululemon' in slug or 'uber' in slug or 'tinder' in slug:
+    elif 'shein' in slug or 'lululemon' in slug or 'uber' in slug or 'tinder' in slug or 'doordash' in slug or 'justeat' in slug or 'deliveroo' in slug:
         return [
-            {"short": "$100 OFF", "title": f"$100 Promo Voucher Code for {title}", "details": "Verified Today | 2.1k uses today", "code": "SAVE-100-RC"},
-            {"short": "50% OFF", "title": f"50% Off Total Purchase + Free Delivery for {title}", "details": "Verified Today | 1.5k uses today", "code": "HALF-OFF-RC"},
-            {"short": "$500 Card", "title": f"$500 Digital Gift Card Voucher for {title}", "details": "Verified 1 Day Ago | 940 uses today", "code": "CARD-500-RC"},
-            {"short": "VIP Perks", "title": f"Bonus Membership & VIP Rewards for {title}", "details": "Verified 2 Days Ago | 610 uses today", "code": "VIP-BONUS-RC"}
+            {"short": "$100 OFF", "title": "$100 Promo Voucher Code & Instant Discount", "details": "Verified Today | 2.1k uses today", "code": "SAVE-100-RC"},
+            {"short": "50% OFF", "title": "50% Off Total Purchase + Free Delivery Voucher", "details": "Verified Today | 1.5k uses today", "code": "HALF-OFF-RC"},
+            {"short": "$500 Card", "title": "$500 Digital Gift Card Balance Code", "details": "Verified 1 Day Ago | 940 uses today", "code": "CARD-500-RC"},
+            {"short": "VIP Perks", "title": "Bonus Membership & VIP Rewards Redemption Pass", "details": "Verified 2 Days Ago | 610 uses today", "code": "VIP-BONUS-RC"}
         ]
     else:
         return [
-            {"short": "Free Code", "title": f"Official Free Download & Unlock Code for {title}", "details": "Verified Today | 1.8k uses today", "code": "FREE-RC26-AA"},
-            {"short": "Bonus Pack", "title": f"Premium Bundle & Virtual Credits for {title}", "details": "Verified Today | 1.1k uses today", "code": "PACK-RC26-BB"},
-            {"short": "Seasonal", "title": f"Limited Edition Event Pass for {title}", "details": "Verified 1 Day Ago | 870 uses today", "code": "PASS-RC26-CC"},
-            {"short": "VIP Redeem", "title": f"Exclusive Creator Code & In-App Perks for {title}", "details": "Verified 2 Days Ago | 530 uses today", "code": "VIP-RC26-DD"}
+            {"short": "Free Code", "title": "Official Free Download & Unlock Code Voucher", "details": "Verified Today | 1.8k uses today", "code": "FREE-RC26-AA"},
+            {"short": "Bonus Pack", "title": "Premium Bundle & Virtual Credits Code", "details": "Verified Today | 1.1k uses today", "code": "PACK-RC26-BB"},
+            {"short": "Seasonal", "title": "Limited Edition Event Pass & Reward Voucher", "details": "Verified 1 Day Ago | 870 uses today", "code": "PASS-RC26-CC"},
+            {"short": "VIP Redeem", "title": "Exclusive Creator Code & In-App Perks Key", "details": "Verified 2 Days Ago | 530 uses today", "code": "VIP-RC26-DD"}
         ]
 
 generated_product_urls = []
@@ -550,16 +776,16 @@ for c in coupons:
         offer_rows_html += f"""
         <div class="d-flex justify-content-between single-coupon m-0 mb-3">
             <div class="d-flex w-75">
-                <div class="mx-1 bg-image single-coupon-image d-flex align-items-center justify-content-center title-short w-25" role="img" aria-label="{html.escape(off['short'])} Voucher">
-                    {html.escape(off['short'])}
+                <div class="mx-1 bg-image single-coupon-image d-flex align-items-center justify-content-center title-short w-25" role="img" aria-label="{off['short']} Voucher">
+                    {off['short']}
                 </div>
                 <div class="content d-flex flex-column justify-content-center w-75 ps-1 ps-lg-0">
-                    <h3 class="h6 mb-0 mb-lg-1">{html.escape(off['title'])}</h3>
+                    <h3 class="h6 mb-0 mb-lg-1">{off['title']}</h3>
                     <div class="categories mb-lg-1 d-none">
                         <span class="single-category me-1">PROMO</span>
                     </div>
                     <div class="details" style="font-size: 12px;">
-                        {html.escape(off['details'])}
+                        {off['details']}
                     </div>
                 </div>
             </div>
@@ -576,7 +802,7 @@ for c in coupons:
                 "@type": "Product",
                 "@id": f"https://robotcoupons.com/coupon/{slug}.html#product",
                 "name": title,
-                "description": desc,
+                "description": meta_desc,
                 "image": f"https://robotcoupons.com/{img_rel}",
                 "brand": {
                     "@type": "Brand",
@@ -601,7 +827,31 @@ for c in coupons:
                     "url": "https://robotcoupons.com/about.html"
                 },
                 "datePublished": "2026-01-15T08:00:00+00:00",
-                "dateModified": "2026-11-23T12:00:00+00:00"
+                "dateModified": "2026-11-27T12:00:00+00:00"
+            },
+            {
+                "@type": "BreadcrumbList",
+                "@id": f"https://robotcoupons.com/coupon/{slug}.html#breadcrumb",
+                "itemListElement": [
+                    {
+                        "@type": "ListItem",
+                        "position": 1,
+                        "name": "Home",
+                        "item": "https://robotcoupons.com/"
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 2,
+                        "name": "Coupons",
+                        "item": "https://robotcoupons.com/games.html"
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 3,
+                        "name": title,
+                        "item": f"https://robotcoupons.com/coupon/{slug}.html"
+                    }
+                ]
             },
             {
                 "@type": "FAQPage",
@@ -617,18 +867,18 @@ for c in coupons:
                     },
                     {
                         "@type": "Question",
-                        "name": f"Is this {title} promotional code 100% free to unlock?",
+                        "name": "Is this promotional code 100% free to unlock?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": f"Yes, all coupons and game keys for {title} on RobotCoupons are completely free to claim with zero payment required."
+                            "text": "Yes, all coupons and game keys on RobotCoupons are completely free to claim with zero payment required."
                         }
                     },
                     {
                         "@type": "Question",
-                        "name": f"How frequently is the {title} voucher list verified?",
+                        "name": "How frequently is the voucher list verified?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": f"Our coupon specialists verify availability for {title} daily to ensure 99.4% redemption reliability across all codes."
+                            "text": "Our coupon specialists verify availability daily to ensure 99.4% redemption reliability across all codes."
                         }
                     }
                 ]
@@ -641,22 +891,22 @@ for c in coupons:
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>{html.escape(title)} — Free Verified Coupons & Promo Codes</title>
+    <title>{title} — Free Verified Coupons & Promo Codes | RobotCoupons</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
-    <meta name="description" content="{html.escape(meta_desc)}" />
-    <meta name="keywords" content="{html.escape(title)}, coupon, promo code, free game code, discount" />
+    <meta name="description" content="{meta_desc}" />
+    <meta name="keywords" content="{title}, coupon, promo code, free game code, discount" />
     <link rel="canonical" href="https://robotcoupons.com/coupon/{slug}.html" />
     <link rel="icon" type="image/ico" href="../view/assets/images/favicon.png" />
     
-    <meta property="og:title" content="{html.escape(title)} — Verified Promo Codes" />
-    <meta property="og:description" content="{html.escape(meta_desc)}" />
+    <meta property="og:title" content="{title} — Verified Promo Codes" />
+    <meta property="og:description" content="{meta_desc}" />
     <meta property="og:url" content="https://robotcoupons.com/coupon/{slug}.html" />
     <meta property="og:site_name" content="RobotCoupons" />
     <meta property="og:type" content="product" />
     <meta property="og:image" content="https://robotcoupons.com/{img_rel}" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="{html.escape(title)} — Verified Promo Codes" />
-    <meta name="twitter:description" content="{html.escape(meta_desc)}" />
+    <meta name="twitter:title" content="{title} — Verified Promo Codes" />
+    <meta name="twitter:description" content="{meta_desc}" />
     <meta name="twitter:image" content="https://robotcoupons.com/{img_rel}" />
 
     <!-- Icons & Fonts -->
@@ -701,22 +951,22 @@ for c in coupons:
 <div class="container my-5">
     <div class="row">
         <div class="col-lg-8 offset-lg-2">
-            <h1>{html.escape(title)}</h1>
+            <h1>{title}</h1>
             <div class="row">
                 <div class="col-lg-8">
-                    <div style="background-image: url(../{img_rel})" class="mb-1 mb-lg-3 w-100 bg-image single-coupon-image single-coupon-page-image d-flex align-items-end" role="img" aria-label="{html.escape(title)} Coupon Image">
-                        <img src="../{img_rel}" alt="{html.escape(title)} Official Voucher" class="visually-hidden" width="300" height="200" />
+                    <div style="background-image: url(../{img_rel})" class="mb-1 mb-lg-3 w-100 bg-image single-coupon-image single-coupon-page-image d-flex align-items-end" role="img" aria-label="{title} Coupon Image">
+                        <img src="../{img_rel}" alt="{title} Official Voucher" class="visually-hidden" width="300" height="200" />
                     </div>
                     <div class="single-coupon-left single-page mb-3 beat-title">Coupons Left: {coupons_left}</div>
                     <h2 class="h5 mb-3 beat-title" style="color: #000">Available Promo Codes &amp; Vouchers</h2>
                     {offer_rows_html}
                 </div>
                 <div class="col-lg-4">
-                    <h2>About {html.escape(title)}</h2>
-                    <p>{html.escape(desc)}</p>
+                    <h2>About {title}</h2>
+                    <p>{desc}</p>
 
                     <h2>Redemption Tips</h2>
-                    <p>Make sure to select your preferred platform or voucher type to receive the verified code for {html.escape(title)}.</p>
+                    <p>Make sure to select your preferred platform or voucher type to receive the verified code for {title}.</p>
 
                     <div class="d-flex align-items-center">
                         <div class="text-warning me-2">
@@ -736,8 +986,8 @@ for c in coupons:
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-body d-flex align-items-center flex-column">
-                <div class="h3 mb-1 text-center" style="color: #000;">{html.escape(title)}</div>
-                <div class="h4 mb-1 text-center">{html.escape(title)}</div>
+                <div class="h3 mb-1 text-center" style="color: #000;">Verified Promo Voucher</div>
+                <div class="h4 mb-1 text-center">Claim Your Reward</div>
                 <div class="text-center details mb-4"></div>
                 <div class="w-75">
                     <div class="single-coupon-left mb-3">Coupons Left Remaining: {coupons_left}</div>
@@ -776,15 +1026,15 @@ for c in coupons:
         <span><i class="fas fa-shield-alt me-1"></i> Tested &amp; Fact-Checked</span>
       </div>
       <div>
-        <span><i class="fas fa-calendar-alt me-1"></i> <time datetime="2026-11-23">Last Verified: November 23, 2026</time></span>
+        <span><i class="fas fa-calendar-alt me-1"></i> <time datetime="2026-11-27">Last Verified: November 27, 2026</time></span>
       </div>
     </div>
 
-    <h2 class="h3 fw-bold mb-3 text-dark">Verified Promo Guide &amp; FAQ for {html.escape(title)}</h2>
-    <p class="lead text-muted">Looking for verified codes for {html.escape(title)}? You have arrived at the premier coupon destination. Our editorial team tests availability for {html.escape(title)} daily so you get working coupons without expired delays.</p>
+    <h2 class="h3 fw-bold mb-3 text-dark">Verified Promo Guide &amp; FAQ for {title}</h2>
+    <p class="lead text-muted">Looking for verified codes for {title}? You have arrived at the premier coupon destination. Our editorial team tests availability for our community daily so you get working coupons without expired delays.</p>
 
     <blockquote class="seo-quote my-4 p-3 border-start border-4 border-primary bg-light" cite="https://robotcoupons.com/about.html">
-      <p class="mb-1 fst-italic">“Our community saves an average of $42.50 per verified code claim for {html.escape(title)} with zero out-of-pocket costs.”</p>
+      <p class="mb-1 fst-italic">“Our community saves an average of $42.50 per verified code claim with zero out-of-pocket costs.”</p>
       <footer class="blockquote-footer mt-1">RobotCoupons Verification Desk</footer>
     </blockquote>
 
@@ -800,7 +1050,7 @@ for c in coupons:
         </thead>
         <tbody>
           <tr>
-            <td>{html.escape(title)}</td>
+            <td>Official Verified Voucher</td>
             <td>99.4% Verified Working</td>
             <td>$42.50 Average Savings</td>
             <td>Checked Daily</td>
@@ -811,31 +1061,32 @@ for c in coupons:
 
     <div class="row g-4 my-2">
       <div class="col-md-6">
-        <h3 class="h5 fw-bold text-dark">How do I redeem my promo code for {html.escape(title)}?</h3>
-        <p class="text-muted">To redeem your {html.escape(title)} discount, click Show Code above, complete a quick verification check to prevent spam, and copy the revealed code into the checkout screen.</p>
+        <h3 class="h5 fw-bold text-dark">How do I redeem verified coupon codes for {title}?</h3>
+        <p class="text-muted">Click the Show Code button above on {title}, complete the quick verification check, and copy your revealed voucher code into checkout.</p>
         
         <ol class="seo-steps-list small text-muted ps-3 mb-0">
-          <li><strong>Select Voucher:</strong> Choose your desired offer for {html.escape(title)}.</li>
+          <li><strong>Select Voucher:</strong> Choose your desired offer.</li>
           <li><strong>Click Show Code:</strong> Open the secure redemption modal.</li>
           <li><strong>Complete Sponsor Check:</strong> Protects codes from automated bots.</li>
           <li><strong>Copy and Redeem:</strong> Paste into the store to save instantly.</li>
         </ol>
       </div>
       <div class="col-md-6">
-        <h3 class="h5 fw-bold text-dark">Are all {html.escape(title)} codes 100% free?</h3>
-        <p class="text-muted">Yes, unlocking promotional vouchers for {html.escape(title)} is completely free with no payment required. All offers for {html.escape(title)} are maintained through our community sponsor partnerships.</p>
+        <h3 class="h5 fw-bold text-dark">Are all promotional keys 100% free?</h3>
+        <p class="text-muted">Yes, unlocking promotional vouchers is completely free with no payment required. All offers are maintained through our community sponsor partnerships.</p>
 
-        <h3 class="h5 fw-bold text-dark mt-3">How often are new {html.escape(title)} codes added?</h3>
-        <p class="text-muted">Our automated verification engine updates coupon batches for {html.escape(title)} every 24 hours to replace expired codes with freshly verified vouchers.</p>
+        <h3 class="h5 fw-bold text-dark mt-3">How often are new codes added?</h3>
+        <p class="text-muted">Our automated verification engine updates coupon batches every 24 hours to replace expired codes with freshly verified vouchers.</p>
       </div>
     </div>
 
     <div class="seo-footer-nav mt-4 pt-3 border-top d-flex flex-wrap gap-3 justify-content-center">
       <a href="../index.html" class="text-decoration-none">Home</a>
-      <a href="../robotcoupons.html" class="text-decoration-none">robotcoupons</a>
-      <a href="../robotcoupons-com.html" class="text-decoration-none">robotcoupons com</a>
-      <a href="../www-robotcoupons.html" class="text-decoration-none">www.robotcoupons</a>
-      <a href="../www-robotcoupons-com.html" class="text-decoration-none">www.robotcoupons.com</a>
+      <a href="../games.html" class="text-decoration-none">Games Hub</a>
+      <a href="../gift-cards.html" class="text-decoration-none">Gift Cards</a>
+      <a href="../trending.html" class="text-decoration-none">Trending Deals</a>
+      <a href="../how-to-redeem.html" class="text-decoration-none">How to Redeem</a>
+      <a href="../verification.html" class="text-decoration-none">Verification Standards</a>
       <a href="../about.html" class="text-decoration-none">About Us</a>
       <a href="../contact.html" class="text-decoration-none">Contact Us</a>
       <a href="../privacy.html" class="text-decoration-none">Privacy Policy</a>
@@ -848,6 +1099,12 @@ for c in coupons:
 <div class="container">
   <footer class="py-3 my-4">
     <ul class="nav justify-content-center border-bottom pb-3 mb-3">
+      <li class="nav-item"><a href="../index.html" class="nav-link px-2 text-muted">Home</a></li>
+      <li class="nav-item"><a href="../games.html" class="nav-link px-2 text-muted">Games</a></li>
+      <li class="nav-item"><a href="../gift-cards.html" class="nav-link px-2 text-muted">Gift Cards</a></li>
+      <li class="nav-item"><a href="../trending.html" class="nav-link px-2 text-muted">Trending</a></li>
+      <li class="nav-item"><a href="../how-to-redeem.html" class="nav-link px-2 text-muted">How to Redeem</a></li>
+      <li class="nav-item"><a href="../verification.html" class="nav-link px-2 text-muted">Verification</a></li>
       <li class="nav-item"><a href="../about.html" class="nav-link px-2 text-muted">About Us</a></li>
       <li class="nav-item"><a href="../contact.html" class="nav-link px-2 text-muted">Contact Us</a></li>
       <li class="nav-item"><a href="../terms.html" class="nav-link px-2 text-muted">Terms of Use</a></li>
@@ -876,7 +1133,7 @@ $('.open-modal').click(function(){{
 </html>
 """
 
-    p_adjusted = adjust_keyword_count(p_html, title, 30)
+    p_adjusted = apply_keyword_density(p_html, title, target_density=0.02, min_count=15)
     
     dest_path = os.path.join(COUPON_DIR, f"{slug}.html")
     with open(dest_path, "w", encoding="utf-8") as f:
@@ -884,13 +1141,18 @@ $('.open-modal').click(function(){{
         
     generated_product_urls.append(f"https://robotcoupons.com/coupon/{slug}.html")
 
-print(f"Generated {len(generated_product_urls)} product pages in coupon/ folder, each with exactly 30 occurrences of its title keyword.")
+print(f"Generated {len(generated_product_urls)} product pages in coupon/ folder, each calibrated to 2% keyword density.")
 
 # ==========================================
-# 4. SITEMAP.XML & SITEMAP.TXT & ROBOTS.TXT & LLMS.TXT
+# 5. SITEMAP.XML & SITEMAP.TXT & ROBOTS.TXT & LLMS.TXT
 # ==========================================
 all_urls = [
     "https://robotcoupons.com/",
+    "https://robotcoupons.com/games.html",
+    "https://robotcoupons.com/gift-cards.html",
+    "https://robotcoupons.com/trending.html",
+    "https://robotcoupons.com/how-to-redeem.html",
+    "https://robotcoupons.com/verification.html",
     "https://robotcoupons.com/robotcoupons.html",
     "https://robotcoupons.com/robotcoupons-com.html",
     "https://robotcoupons.com/www-robotcoupons.html",
@@ -903,7 +1165,8 @@ all_urls = [
 
 sitemap_xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
 for u in all_urls:
-    sitemap_xml += f'  <url>\n    <loc>{u}</loc>\n    <lastmod>2026-11-23</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>{"1.0" if u == "https://robotcoupons.com/" else "0.8"}</priority>\n  </url>\n'
+    prio = "1.0" if u == "https://robotcoupons.com/" else ("0.9" if not u.startswith("https://robotcoupons.com/coupon/") else "0.8")
+    sitemap_xml += f'  <url>\n    <loc>{u}</loc>\n    <lastmod>2026-11-27</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>{prio}</priority>\n  </url>\n'
 sitemap_xml += '</urlset>\n'
 
 with open(os.path.join(BASE_DIR, "sitemap.xml"), "w", encoding="utf-8") as f:
@@ -948,8 +1211,13 @@ with open(os.path.join(BASE_DIR, "robots.txt"), "w", encoding="utf-8") as f:
 llms_txt = """# RobotCoupons - Verified Free Digital Promo Codes & Game Vouchers
 > Premier coupon discovery portal for gaming codes, gift vouchers, and verified promotional discounts.
 
-## Main Pages
+## Main Pages & Category Hubs
 - [Home](https://robotcoupons.com/): Official portal for verified digital discounts and free gaming vouchers.
+- [Games Hub](https://robotcoupons.com/games.html): Complete directory of PC, PlayStation, Xbox, and mobile game promo codes.
+- [Gift Cards Hub](https://robotcoupons.com/gift-cards.html): Free digital gift card codes and shopping vouchers.
+- [Trending Deals](https://robotcoupons.com/trending.html): Real-time community popularity ranking of the top claimed codes.
+- [How to Redeem](https://robotcoupons.com/how-to-redeem.html): Step-by-step tutorial on unlocking and redeeming vouchers.
+- [Verification Standards](https://robotcoupons.com/verification.html): Code auditing methodology, 24-hour cycle, and fraud prevention.
 - [robotcoupons Catalog](https://robotcoupons.com/robotcoupons.html): Full coupon index and brand directory.
 - [robotcoupons com](https://robotcoupons.com/robotcoupons-com.html): Digital gift card hub and verified vouchers.
 - [www.robotcoupons](https://robotcoupons.com/www-robotcoupons.html): Daily tested promo keys and deals.
@@ -959,8 +1227,8 @@ llms_txt = """# RobotCoupons - Verified Free Digital Promo Codes & Game Vouchers
 - [Privacy Policy](https://robotcoupons.com/privacy.html): Visitor privacy guarantees and analytics disclosures.
 - [Terms of Use](https://robotcoupons.com/terms.html): Terms and conditions for personal voucher redemption.
 
-## Product Coupens
-Over 100 verified game codes and promo vouchers available in the /coupon/ directory.
+## Product Coupons
+Over 120 verified game codes and promo vouchers available in the /coupon/ directory.
 """
 with open(os.path.join(BASE_DIR, "llms.txt"), "w", encoding="utf-8") as f:
     f.write(llms_txt)

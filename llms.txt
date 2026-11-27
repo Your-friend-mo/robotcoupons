@@ -1,8 +1,13 @@
 # RobotCoupons - Verified Free Digital Promo Codes & Game Vouchers
 > Premier coupon discovery portal for gaming codes, gift vouchers, and verified promotional discounts.
 
-## Main Pages
+## Main Pages & Category Hubs
 - [Home](https://robotcoupons.com/): Official portal for verified digital discounts and free gaming vouchers.
+- [Games Hub](https://robotcoupons.com/games.html): Complete directory of PC, PlayStation, Xbox, and mobile game promo codes.
+- [Gift Cards Hub](https://robotcoupons.com/gift-cards.html): Free digital gift card codes and shopping vouchers.
+- [Trending Deals](https://robotcoupons.com/trending.html): Real-time community popularity ranking of the top claimed codes.
+- [How to Redeem](https://robotcoupons.com/how-to-redeem.html): Step-by-step tutorial on unlocking and redeeming vouchers.
+- [Verification Standards](https://robotcoupons.com/verification.html): Code auditing methodology, 24-hour cycle, and fraud prevention.
 - [robotcoupons Catalog](https://robotcoupons.com/robotcoupons.html): Full coupon index and brand directory.
 - [robotcoupons com](https://robotcoupons.com/robotcoupons-com.html): Digital gift card hub and verified vouchers.
 - [www.robotcoupons](https://robotcoupons.com/www-robotcoupons.html): Daily tested promo keys and deals.
@@ -12,5 +17,5 @@
 - [Privacy Policy](https://robotcoupons.com/privacy.html): Visitor privacy guarantees and analytics disclosures.
 - [Terms of Use](https://robotcoupons.com/terms.html): Terms and conditions for personal voucher redemption.
 
-## Product Coupens
-Over 100 verified game codes and promo vouchers available in the /coupon/ directory.
+## Product Coupons
+Over 120 verified game codes and promo vouchers available in the /coupon/ directory.
